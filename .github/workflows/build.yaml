@@ -1,28 +1,79 @@
----
-name: "pre-release"
+name: Build and Release
 
 on:
   push:
     branches:
-      - "main"
+    - main
 
 jobs:
-  pre-release:
-    name: "Pre Release"
-    runs-on: "ubuntu-latest"
-
+  build:
+    runs-on: ubuntu-latest
     steps:
-      # ...
-      - name: "Build & test"
-        run: |
-          echo "done!"
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - uses: "marvinpinto/action-automatic-releases@latest"
-        with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest"
-          prerelease: true
-          title: "Development Build"
-          files: |
-            LICENSE.txt
-            *.jar
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build
+      run: npm run build
+
+    - name: Create build zip
+      run: zip -r build.zip . -i build/*
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: build-${{ github.run_number }}
+        path: build.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set Tag Name
+      id: set_tag_name
+      run: |
+        tag_name=$(date +'%Y-%m-%d')-number-${{ github.run_number }}
+        echo "Tag Name: $tag_name"
+        echo "::set-output name=tag_name::$tag_name"
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.set_tag_name.outputs.tag_name }}
+        release_name: Release ${{ steps.set_tag_name.outputs.tag_name }}
+        body: Describe your release here.
+        draft: false
+        prerelease: false
+
+    - name: Create builds directory
+      run: mkdir -p builds
+
+    - name: Download Artifact
+      uses: actions/download-artifact@v2
+      with:
+        name: build-${{ github.run_number }}
+        path: builds
+
+    - name: List contents of builds directory
+      run: ls -l builds
+
+    - name: Get upload URL
+      id: geturl
+      run: |
+        upload_url=$(curl -sL https://api.github.com/repos/${{github.repository}}/releases/latest?access_token=${{ secrets.GITHUB_TOKEN }} | jq -r '.upload_url')
+        echo ::set-output name=upload_url::$upload_url
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.geturl.outputs.upload_url }}
+        asset_path: builds/build.zip
+        asset_name: build.zip
+        asset_content_type: application/zip
